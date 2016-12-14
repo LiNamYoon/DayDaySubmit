@@ -1,0 +1,154 @@
+using UnityEngine;
+using System.Collections;
+using UnityEngine.SceneManagement;
+using LitJson;
+using System;
+using PathologicalGames;
+
+
+[Serializable]
+public class EventListData
+{
+    public string eventName;            // 이벤트 이름
+    public string sceneName;            // 씬 이름
+    public string assetBundle;          // 에셋번들 위치
+    public string icon;                 // 아이콘 스프라이트 이름
+    public DateTime startTime;          // 시작시간
+    public DateTime endTime;            // 종료시간
+    public int enable;                  // 활성화 = 1
+
+}
+
+public class Notice : MonoBehaviour {
+    public static bool isNoticeCheck { get; set; }
+    //static bool gameStartShow = false; //게임도중 하루가 지났다고 다시 띄우지 않기 위한 변수
+    public SpawnPool eventPool;
+    public GameObject panel;            
+    public GameObject grid;             //목록 그리드
+    
+    void Awake()
+    {
+        //return;
+        StartCoroutine(Init());
+        StartCoroutine(GetEventListCoroutine());
+        //if (gameStartShow) return; //게임이 처음 시작되고 공지사항을 보여줬다면 리턴;
+
+        //gameStartShow = true;
+
+        //System.DateTime StartDate = System.DateTime.Now;
+        //if (PlayerPrefs.GetString("isCheckTime") != null && PlayerPrefs.GetString("isCheckTime") != "")
+        //{
+        //    StartDate = System.Convert.ToDateTime(PlayerPrefs.GetString("isCheckTime")); // 시작시간
+
+        //    System.DateTime NowDate = System.DateTime.Now;
+        //    System.TimeSpan timeCal = NowDate - StartDate;
+
+        //    isNoticeCheck = true;
+        //    //오차 시간이 하루 이상일때 다시 공지사항 보여줌.
+        //    if (timeCal.Days >= 1)
+        //    {
+        //        PlayerPrefs.DeleteKey("isCheckTime");
+        //        isNoticeCheck = false;
+        //        ShowEvent();
+        //    }
+        //}
+        //else
+        //{
+        //    isNoticeCheck = false;
+        //    ShowEvent();
+
+        //}
+    }
+
+    void OnEnable()
+    {
+        panel.GetComponent<TweenPosition>().ResetToBeginning();
+    }
+    IEnumerator GetEventListCoroutine()
+    {
+        
+        string wwwString = "GetEventList.php";
+        
+        string json = "";
+        WWWForm form = null;
+        yield return StartCoroutine(WWWManager.Instance.WWW(wwwString, form, x => json = x));
+
+        if (!string.IsNullOrEmpty(json))
+            EventList(json);
+
+    }
+    void EventList(string json)
+    {
+        JsonParser jsonParser = new JsonParser();
+        json = jsonParser.Decoder(json);
+
+        JsonReader jReader = new JsonReader(json);
+        JsonData jData = JsonMapper.ToObject(jReader);
+
+        for (int i = 0; i < jData.Count; i++)
+        {
+            EventListData eventData = new EventListData();
+            eventData.eventName = jsonParser.ToString(jData[i]["eventName"]);
+            eventData.sceneName = jsonParser.ToString(jData[i]["sceneName"]);
+            eventData.assetBundle = jsonParser.ToString(jData[i]["assetBundle"]);
+            eventData.icon = jsonParser.ToString(jData[i]["icon"]);
+            eventData.startTime = jsonParser.ToDateTime(jData[i]["startTime"]);
+            eventData.endTime = jsonParser.ToDateTime(jData[i]["endTime"]);
+            eventData.enable = jsonParser.ToInt(jData[i]["enable"]);
+
+        }
+
+        //스폰 모두 해제
+        eventPool.DespawnAll();
+
+        //스폰
+        for (int i = 0; i < jData.Count; i++)
+        {
+            Transform t = eventPool.Spawn("NewEvent");
+            t.parent = grid.transform;
+            t.localPosition = Vector3.zero;
+            t.localRotation = Quaternion.identity;
+            t.localScale = Vector3.one;
+            t.GetComponent<NewEvent>().icon = jsonParser.ToString(jData[i]["icon"]);
+            t.GetComponent<NewEvent>().sceneName = jsonParser.ToString(jData[i]["sceneName"]);
+            t.GetComponent<NewEvent>().assetBundle = jsonParser.ToString(jData[i]["assetBundle"]);
+            t.GetComponent<NewEvent>().eventName = jsonParser.ToString(jData[i]["eventName"]);
+            UIWidget widget = t.gameObject.GetComponent<UIWidget>();
+            if (widget)
+            {
+                widget.height = (int)panel.GetComponent<UIPanel>().height;
+            }
+
+        }
+        panel.GetComponent<TweenPosition>().to = new Vector3(200 + (200 * jData.Count), 0, 0);
+
+        //재정렬
+        grid.GetComponent<UIGrid>().Reposition();
+        //scrollView.GetComponent<UIScrollView>().ResetPosition();
+    }
+
+    IEnumerator Init()
+    {
+        while (!SceneLobby.Instance)
+            yield return null;
+        
+        SceneLobby.Instance.OnChangeMenuState += ChangeMenuState;
+
+    }
+
+    void ChangeMenuState(LobbyMenuState state)
+    {
+        gameObject.SetActive(state == LobbyMenuState.Main);        
+    }
+    bool test = false;
+    public void ShowEvent()
+    {
+        panel.GetComponent<TweenPosition>().ResetToBeginning();
+        test = !test;
+        if(test)
+        {
+            panel.GetComponent<TweenPosition>().Play();
+        }
+
+    }
+}
