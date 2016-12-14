@@ -1,0 +1,69 @@
+using UnityEngine;
+using System.Collections;
+using UnityEngine.SceneManagement;
+
+public class NewEvent : MonoBehaviour
+{
+    public string eventName { get; set; }
+    public string sceneName { get; set; }
+    public string assetBundle { get; set; }
+    public string icon { get; set; }
+
+    public UISprite sprite_Icon;
+    public UILabel label_EventName;
+   
+
+    void Awake()
+    {
+        StartCoroutine(Init());
+    }
+    void Start()
+    {
+        eventName = LocalizationManager.GetText(eventName);
+        label_EventName.text = eventName;
+        
+        sprite_Icon.spriteName = icon;
+    }
+
+    IEnumerator Init()
+    {
+        while (!SceneLobby.Instance)
+            yield return null;
+        if(UserData.Instance)
+        {
+            gameObject.SetActive(UserData.Instance.level < 10);
+        }
+
+
+        
+        SceneLobby.Instance.OnChangeMenuState += ChangeMenuState;
+
+    }
+
+    void ChangeMenuState(LobbyMenuState state)
+    {
+        // 레벨 10 이하 그리고 메인화면일때만 켜짐
+        gameObject.SetActive(state == LobbyMenuState.Main && UserData.Instance.level < 10);
+    }
+
+    public void ShowEvent()
+    {
+        StartCoroutine(ShowEventCoroutine());
+    }
+
+    
+
+    IEnumerator ShowEventCoroutine()
+    {
+        
+        Scene sceneEvent = SceneManager.GetSceneByName(sceneName);
+        if (!sceneEvent.isLoaded)
+        {
+            yield return StartCoroutine(AssetLoader.Instance.LoadLevelAsync(assetBundle, sceneName, true));
+
+            sceneEvent = SceneManager.GetSceneByName(sceneName);
+        }
+
+    }
+
+}
