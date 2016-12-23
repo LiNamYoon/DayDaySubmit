@@ -1,0 +1,178 @@
+<?php
+// 유면 유저를 분류하고 검색하는 php
+
+	
+	include("Config.php");
+	
+	$id = $_POST['id'];	
+	$type = $_POST['type'];
+	
+	// 정리할 테이블의 배열
+	$dormantTables = array("user_Dormant","mail_Dormant","Attendance_Dormant","Property_Dormant","userDetail_Dormant","RankTeammatchAll_Dormant",
+			"RankDeathmatchAll_Dormant","PremiumPackage_Dormant","PossessCharacter_Dormant","Inventory_Dormant","Achieve_Dormant");
+	$enableTables =  array("user","mail","Attendance","Property","userDetail","RankTeammatchAll",
+			"RankDeathmatchAll","PremiumPackage","PossessCharacter","Inventory","Achieve");
+	$deleteTables = array("user_D","mail_D","Attendance_D","Property_D","userDetail_D","RankTeammatchAll_D",
+			"RankDeathmatchAll_D","PremiumPackage_D","PossessCharacter_D","Inventory_D","Achieve_D");
+	
+	
+// 	$EnableToUserCount = 0;
+// 	$DormantUserCount = 0;
+// 	$DeleteUserCount = 0;
+	
+	$k = 0;
+	$i = 0;
+	$j = 0;
+	
+
+	if($type == "" || $type == NULL)
+	{
+		return ;		
+	}	
+	else if($type == "RetrunToUser")
+	{
+		// 복귀 유저
+		$getTable = $dormantTables; 
+		$setTable = $enableTables;	
+		$result_text = "RetrunToEnableUser";
+		
+		IDCheck($conn,$id, $getTable, $setTable);
+	}
+	else if($type == "DeleteUser")
+	{
+		// 삭제 백업 유저
+		$getTable = $enableTables;
+		$setTable = $deleteTables;
+		$result_text = "DeleteUser";
+		
+		IDCheck($conn,$id, $getTable, $setTable);
+	}
+	else if($type == "DormantUser")
+	{
+		// 유저 테이블 정리
+		$getTable = $enableTables;
+		$setTable = $dormantTables;
+		$result_text = "ChangeSuccess";
+		
+		$sql = "SELECT * FROM $getTable[0]";
+		$result_info = mysqli_query($conn, $sql);
+		
+		while ($row = mysqli_fetch_assoc($result_info))
+		{
+			$lastLoginTime = strtotime($row['lastLoginTime']);
+			$level = $row['level'];
+				
+			$nowTime = mktime(); //현재 시간
+			$addTime = 1209600; //2주일 (초)
+			$sun = $nowTime - $addTime;
+				
+			if($lastLoginTime >= $sun && $level > 2)
+			{
+				// enable DB 활성화 계정
+				//$EnableToUserCount++;
+			}
+			else if($lastLoginTime < $sun && $level <= 2)
+			{
+				// Delete DB 삭제 계정
+				$id = $row['id'];
+				//$DeleteUserCount++;
+				$setTable = $deleteTables;
+				Swap($conn, $id, $getTable, $setTable);
+			}
+			else
+			{
+				// Dormant DB 휴면계정
+				$id = $row['id'];
+				//$DormantUserCount++;					
+				Swap($conn, $id, $getTable, $setTable);
+			}
+		}
+	}
+	else 
+	{
+		$result_text = "SelectFail type is Null";
+	}
+
+ 
+
+	function IDCheck($conn,$id, $getTable = array(),$setTable =array())
+	{
+		$sql = "SELECT * FROM $getTable[0] WHERE id = '$id'";
+		$result_info = mysqli_query($conn, $sql);
+		$row_count =  mysqli_num_rows($result_info);
+		
+		if($row_count <= 0)
+		{
+			$result_text = "SelectFail";
+		}
+		else if($row_count > 0)
+		{
+			Swap($conn, $id, $getTable, $setTable);
+		}
+	}	
+	
+	function Swap($conn,$id, $getTable = array(),$setTable =array())
+	{
+		$i = 0;
+		foreach ($setTable as $value)
+		{		
+			$sql = "SELECT TABLE1, TABLE2, ... FROM "
+			
+			
+			if($i ==0)
+			{
+				$sql ="INSERT INTO $setTable[$i] SELECT * FROM $getTable[$i] WHERE id = '$id'";
+				mysqli_query($conn, $sql);
+				$sql = "DELETE FROM $getTable[$i] WHERE id = '$id'";
+				mysqli_query($conn, $sql);
+			}
+			else if($i ==1)
+			{
+				$sql ="INSERT INTO $setTable[$i] SELECT * FROM $getTable[$i] WHERE reciever = '$id'";
+				mysqli_query($conn, $sql);
+				$sql = "DELETE FROM $getTable[$i] WHERE reciever = '$id'";
+				mysqli_query($conn, $sql);
+			}
+			else if($i ==2)
+			{
+				$sql ="INSERT INTO $setTable[$i] SELECT * FROM $getTable[$i] WHERE cId = '$id'";
+				mysqli_query($conn, $sql);
+				$sql = "DELETE FROM $getTable[$i] WHERE cId = '$id'";
+				mysqli_query($conn, $sql);
+			}
+			else if($i ==3)
+			{
+				$sql ="INSERT INTO $setTable[$i] SELECT * FROM $getTable[$i] WHERE cId = '$id'";
+				mysqli_query($conn, $sql);
+				$sql = "DELETE FROM $getTable[$i] WHERE cId = '$id'";
+				mysqli_query($conn, $sql);
+			}
+			else
+			{
+				$sql ="INSERT INTO $setTable[$i] SELECT * FROM $getTable[$i] WHERE userID = '$id'";
+				mysqli_query($conn, $sql);
+				$sql = "DELETE FROM $getTable[$i] WHERE userID = '$id'";
+				mysqli_query($conn, $sql);
+			}
+			$i++;
+		}
+		
+	}
+/* 디버깅용 
+ 	echo "RetrunToUserCount ";
+ 	echo $RetrunToUserCount;
+ 	echo "\n";
+ 	echo "DeleteUserCount ";
+ 	echo $DeleteUserCount;
+ 	echo "\n";
+ 	echo "DormantUserCount ";
+ 	echo $DormantUserCount;
+ 	echo "\n";
+*/
+	// 결과 출력
+	echo $result_text;
+	
+	
+
+
+?>
