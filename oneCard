@@ -1,0 +1,89 @@
+using UnityEngine;
+using System.Collections;
+using System.Collections.Generic;
+using System.Linq;
+
+public class Player
+{
+    public string name { get; set; }
+    public string[] _cord = new string[40];
+    
+}
+
+public class NewBehaviourScript : MonoBehaviour
+{
+    List<Player> player = new List<Player>();
+
+    string[] type = new string[] { "Spade", "Diamond", "Club", "Heart" };
+    string[] num = new string[] { "A", "2", "3", "4", "5", "6", "7", "8", "9", "10" };
+
+
+    List<string> cord = new List<string>();
+
+    void Start ()
+    {
+
+       
+        // 플레이어 세팅
+        for (int i = 0; i < 4; i++)
+        {
+            Player date = new Player();            
+            date.name = "player" + i;
+            player.Add(date);
+            Debug.Log(player[i].name + "입장");
+        }
+
+        CordSet();
+    }
+
+    // 카드 세팅
+    void CordSet()
+    {
+        for (int i = 0; i < type.Length; i++)
+        {
+            for (int j = 0; j < num.Length; j++)
+            {
+                cord.Add(type[i] + " " + num[j]);
+            }
+        }
+        Debug.Log("카드세팅 완료");
+        Debug.Log("남은 카드 갯수 : " + cord.Count);
+    }
+
+
+    // 카드 섞기
+    void cordDate()
+    {
+        for (int i = 0; i < cord.Count; i++)
+        {
+            int dd = Random.Range(0, cord.Count);
+            string value = cord[i];
+            cord[i] = cord[dd];
+            cord[dd] = value;
+        }
+    }
+
+    void Update()
+    {
+        if (Input.GetKeyDown(KeyCode.Space))
+        {
+            cordDate();
+
+            for (int i = 0; i < player.Count; i++)
+            {
+                for (int j = 0; j < 5; j++)
+                {
+                    player[i]._cord[j] = cord[j];
+                    cord.RemoveAt(j);
+
+                    Debug.Log(player[i].name + "에게 " + player[i]._cord[j] + "주었습니다.");
+                }
+            }
+            Debug.Log("남은 카드 갯수 : " + cord.Count);
+        }
+    }
+    
+
+    // 4명의 플레이어 
+}
+
