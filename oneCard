@@ -1,89 +1,199 @@
-using UnityEngine;
-using System.Collections;
+using System;
 using System.Collections.Generic;
+using System.Collections;
 using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
 
-public class Player
+namespace OneCard
 {
-    public string name { get; set; }
-    public string[] _cord = new string[40];
-    
-}
-
-public class NewBehaviourScript : MonoBehaviour
-{
-    List<Player> player = new List<Player>();
-
-    string[] type = new string[] { "Spade", "Diamond", "Club", "Heart" };
-    string[] num = new string[] { "A", "2", "3", "4", "5", "6", "7", "8", "9", "10" };
-
-
-    List<string> cord = new List<string>();
-
-    void Start ()
+    public class Player
     {
+        public string name { get; set; }
+        public List<string> _card = new List<string>();
 
-       
-        // 플레이어 세팅
-        for (int i = 0; i < 4; i++)
-        {
-            Player date = new Player();            
-            date.name = "player" + i;
-            player.Add(date);
-            Debug.Log(player[i].name + "입장");
-        }
-
-        CordSet();
     }
 
-    // 카드 세팅
-    void CordSet()
+    public class GameManager
     {
-        for (int i = 0; i < type.Length; i++)
+        List<Player> player = new List<Player>();
+
+        string[] type = new string[] { "Spade", "Diamond", "Club", "Heart" };
+        string[] num = new string[] { "A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K" };
+        
+        
+        List<string> card = new List<string>();
+        List<string> delete_card = new List<string>();
+
+        static void Main(string[] args)
         {
-            for (int j = 0; j < num.Length; j++)
+            GameManager gameManager = new GameManager();
+
+            gameManager.Start();
+            gameManager.Update();
+            gameManager.CheckCard(0);
+
+
+            
+        }
+
+        void Start()
+        {
+            // 플레이어 세팅
+            for (int i = 0; i < 4; i++)
             {
-                cord.Add(type[i] + " " + num[j]);
+                Player date = new Player();
+                date.name = "player" + i;
+                player.Add(date);
+                Console.WriteLine(player[i].name + "입장");
+            }
+
+            CordSet();
+        }
+
+        // 카드 세팅
+        void CordSet()
+        {
+            for (int i = 0; i < type.Length; i++)
+            {
+                for (int j = 0; j < num.Length; j++)
+                {
+                    card.Add(type[i] + " " + num[j]);
+                }
+            }
+            Console.WriteLine("카드세팅 완료");
+            Console.WriteLine("남은 카드 갯수 : " + card.Count);
+            cordMix();
+        }
+
+
+        // 카드 섞기
+        void cordMix()
+        {
+            Random random = new Random();
+            for (int i = 0; i < card.Count; i++)
+            {
+                int dd = random.Next(0, card.Count);
+                string value = card[i];
+                card[i] = card[dd];
+                card[dd] = value;
             }
         }
-        Debug.Log("카드세팅 완료");
-        Debug.Log("남은 카드 갯수 : " + cord.Count);
-    }
 
-
-    // 카드 섞기
-    void cordDate()
-    {
-        for (int i = 0; i < cord.Count; i++)
+        void Update()
         {
-            int dd = Random.Range(0, cord.Count);
-            string value = cord[i];
-            cord[i] = cord[dd];
-            cord[dd] = value;
-        }
-    }
-
-    void Update()
-    {
-        if (Input.GetKeyDown(KeyCode.Space))
-        {
-            cordDate();
-
             for (int i = 0; i < player.Count; i++)
             {
                 for (int j = 0; j < 5; j++)
                 {
-                    player[i]._cord[j] = cord[j];
-                    cord.RemoveAt(j);
+                    player[i]._card.Add(card[0]);
+                    Console.WriteLine(player[i].name + "에게 " + card[0] + "주었습니다.");
+                    card.RemoveAt(0);
 
-                    Debug.Log(player[i].name + "에게 " + player[i]._cord[j] + "주었습니다.");
+                    
                 }
             }
-            Debug.Log("남은 카드 갯수 : " + cord.Count);
+
+            Console.WriteLine("오픈된 카드 : " + card[0]);
+            Console.WriteLine("===============================");
+            delete_card.Add(card[0]);
+            card.RemoveAt(0);
+            Console.ReadLine();
         }
+
+        void GetCard(int i)
+        {
+            if(card.Count ==0)
+            {
+                card = delete_card;
+                delete_card.Clear();
+                cordMix();
+            }
+            player[i]._card.Add(card[0]);
+            card.RemoveAt(0);
+
+            Console.WriteLine(player[i].name + "에게 " + card[0] + "주었습니다.");                
+
+            Console.WriteLine("남은 카드 갯수 : " + card.Count);
+        }
+
+        void CheckCard(int i)
+        {
+            int j = 0;
+            
+            while(player[i]._card.Count > j)
+            {
+                string[] card = delete_card[delete_card.Count - 1].Split(' ');
+                string type = card[0];
+                string num = card[1];
+
+
+                string[] p_card = player[i]._card[j].Split(' ');
+                string p_type = p_card[0];
+                string p_num = p_card[1];
+
+                if(type == p_type)
+                {
+                    
+                    break;
+                }
+                else if(num == p_num)
+                {
+                    
+                    break;
+                }
+                else
+                {
+                    j++;
+                }
+                
+            }
+
+            if(player[i]._card.Count <= j)
+            {
+                GetCard(i);
+            }
+            else
+            {                
+                Console.WriteLine(player[i].name + "님이 " + player[i]._card[j] + "카드를 냈습니다.");
+                Console.WriteLine("===============================");
+                delete_card.Add(player[i]._card[j]);
+                player[i]._card.Remove(player[i]._card[j]);
+            }
+            
+            Console.WriteLine(player[i].name + "의 턴이 끝났습니다. 남은카드 수 : " + player[i]._card.Count);
+            Console.WriteLine("===============================");
+            
+            GameOver(i);
+        }
+
+
+        void GameOver(int i)
+        {
+            if(player[i]._card.Count >=20)
+            {
+                // 플레이어 게임 오버 (파산)
+                Console.WriteLine(player[i].name + "님 파산");
+                player.Remove(player[i]);
+            }
+
+            if (player[i]._card.Count <= 0)
+            {
+                // 플레이어 게임 오버 (승리)
+                Console.WriteLine(player[i].name + "님 승리");
+                player.Remove(player[i]);
+            }
+            i++;
+            if(player.Count <= i)
+            {
+                i = 0;
+            }
+            Console.ReadLine();
+            CheckCard(i);
+           
+        }
+
     }
     
-
-    // 4명의 플레이어 
+   
 }
-
