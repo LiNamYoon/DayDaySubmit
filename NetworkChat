@@ -1,0 +1,1665 @@
+using UnityEngine;
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using ExitGames.Client.Photon.Chat;
+using Hashtable = ExitGames.Client.Photon.Hashtable;
+using ExitGames.Client.Photon;
+
+/// <summary> 채팅 할 때 메시지 어디다 보낼지 </summary>
+public enum ChatTarget
+{
+    /// <summary> 전체. 로비에서라면 로비채널, 게임 중이라면 게임 채널 </summary>
+    All,
+    /// <summary> 같은 파티원에게만 </summary>
+    Party,
+    /// <summary> 귓속말. 특정 유저한테만 </summary>
+    Whisper,
+    /// <summary> 같은 클랜원에게만 </summary>
+    Clan
+}
+/// <summary> privateMessage를 이용한 처리를 할 때, 어떤 처리를 위한 메시지인지 구분하기 위한 용도 </summary>
+public enum PrivateMessageType
+{
+    System,
+    CheckLogin,
+    Whisper,
+    Party,
+    /// <summary> 친구 관련 메시지. 받은 친구에서 수락을 했을 때 상대에게 전송 (상대방이 접속중일 때 동기화 시키기 위함) </summary>
+    AddFriend
+}
+
+/// <summary> 해당 채널의 모든사용자에게 보내기위한 용도 (강퇴기능) </summary>
+public enum AllMessageType
+{
+    Exit,
+    End,
+}
+
+/// <summary> 특정 사용자에게 보내기위한 용도 (게임에서 강퇴기능 포함) </summary>
+public enum WhisperMessageType
+{
+    Whisper,
+    Kick,
+    End,
+}
+
+public class ChatFriendStatus
+{
+    public string nickName;
+    public int status;
+    public object message;
+}
+
+public delegate void PrivateChatMessageCallback(string sender, object _message, string channelName);
+public class NetworkChat : MonoBehaviour, IChatClientListener
+{
+    //instance
+    static public NetworkChat Instance;
+    DataManager dataManager;
+
+    public PrivateChatMessageCallback onGetPrivateMessage;
+
+    //class
+    [System.Serializable]
+    public class InfoChat
+    {
+        public string name;
+        public int msgCount;
+    }
+
+    [System.Serializable]
+    public class NGUILink
+    {
+        public UILabel state;                   //상태
+    }
+
+    UserData userData;
+    Friend friend;
+    public NewList<ChatFriendStatus> chatFriendStatus = new NewList<ChatFriendStatus>();
+    
+    public string ChatAppId;                    // set in inspector. Your Chat AppId (don't mix it with Realtime/Turnbased Apps).
+    public string[] ChannelsToJoinOnConnect;    // set in inspector. Demo channels to join automatically.
+    public int HistoryLengthToFetch;            // set in inspector. Up to a certain degree, previously sent messages can be fetched for context
+
+
+    const string constLobbyChannelName = "lobby";
+
+    public string nickName { get; set; }
+    public ChatChannel currentChannel;
+    public string currentChannelName { get; set; }
+    public ChatChannel currentPartyChannel;
+    bool doingPrivateChat;	   
+
+    public ChatClient chatClient;
+    
+    public UIButton buttonChat = null;
+    public UISprite spriteLobby = null;
+    public UISprite spriteIngame = null;
+    public UITextList chatLog = null;
+    public UIInput chatInput = null;
+    public UIInput whisperTargetName = null;
+    public UIScrollBar chatScrollBar = null;
+    public UIWidget panelPreview = null;
+    public UITextList labelPreview = null;
+    [Tooltip("채팅 대상 바꾸기 버튼. 전체, 파티, 귓속말..")]
+    public UIButton buttonChangeChatTarget;
+    [Tooltip("채팅 대상 바꾸기 버튼에 달린 레이블. 전체, 파티, 귓속말..")]
+    public UILabel labelChangeChatTarget;
+    public bool isPanelOpened = false;
+
+	int messageCount = 0;
+    float previewTime = 3f;
+    float previewFadeoutTime = 2f;
+    float lastPreviewUpdatedTime = 0f;
+
+    // 에디터에서만 작동 (강퇴할놈 닉네임)
+    public string kickTargetNick;
+
+    // 채팅 필터링용
+    ChatFilter chatFilter = new ChatFilter();
+
+	//private
+	private List<InfoFriend> sessionFriends;			//연결된 친구 목록
+
+	//public
+	public GameObject panelChat;
+
+	public NGUILink gui;								//ui연결
+
+    ChatTarget _chatTarget;
+    public ChatTarget chatTarget
+    {
+        get { return _chatTarget; }
+        set
+        {
+            _chatTarget = value;
+            switch (value)
+            {
+                case ChatTarget.All:
+                    //gui.state.text = "[전체]";
+                    gui.state.text = "["+ LocalizationManager.GetText("Chat_All") + "]";
+                    gui.state.color = Color.white;
+                    break;
+                case ChatTarget.Party:
+                    //gui.state.text = "[파티]";
+                    gui.state.text = "[" + LocalizationManager.GetText("Chat_Party") + "]";
+                    gui.state.color = Color.blue;
+                    break;
+                case ChatTarget.Whisper:
+                    //gui.state.text = "[귓속말]";
+                    gui.state.text = "[" + LocalizationManager.GetText("Chat_Whisper") + "]";
+                    gui.state.color = Color.magenta;
+                    break;
+            }
+        }
+    }
+
+	public UILabel label_InputField_Chatmode;
+	public UILabel label_InputField_Whisper;
+	public UILabel label_InputField_Context;
+	public UILabel label_State;
+
+	//============================================================================================================
+	void Awake()
+    {
+		Instance = this;
+		        
+        DontDestroyOnLoad(gameObject);
+		        
+        Application.runInBackground = true; 
+
+		panelChat.SetActive(false);
+
+        dataManager = DataManager.Instance;
+        userData = UserData.Instance;
+
+        
+    }
+
+    //============================================================================================================
+    void Start()
+    {
+        if (UIManager.uiRoot)
+        {
+            transform.parent = UIManager.uiRoot.transform;
+            transform.localScale = Vector3.one;
+            if (GetComponent<UIWidget>())
+                GetComponent<UIWidget>().SetAnchor(transform.parent);
+        }
+        
+        buttonChat.isEnabled = false;
+
+        //설정
+        //infoChat = new List<InfoChat>();
+        //this.SetChannel(E_CHANNEL._LOBBY, null);
+
+        chatFriendStatus.OnAdd += new ListEventHandler(OnAddChatFriendStatus);
+
+        if (chatClient == null)
+            chatClient = new ChatClient(this);
+
+        chatClient.DebugOut = DebugLevel.OFF;
+
+		//if (chatClient == null)
+		//StartCoroutine(InitNetworkA());
+
+		//label_InputField_Chatmode.text = LocalizationManager.GetText("5200180005");
+		label_InputField_Whisper.text = LocalizationManager.GetText("Nickname opponents");
+        //label_InputField_Context.text = LocalizationManager.GetText("5200180026");
+
+        
+        FriendDataManager friendDataManager = null;
+        if (DataManager.Instance && DataManager.Instance.friend != null)
+            friendDataManager = DataManager.Instance.friend;
+
+        if (friendDataManager != null)
+            friendDataManager.onChangeFriendStatus += DataManager.Instance.friend.UpdateState;
+            
+    }
+
+    void Destroy()
+    {
+        FriendDataManager friendDataManager = null;
+        if (DataManager.Instance && DataManager.Instance.friend != null)
+            friendDataManager = DataManager.Instance.friend;
+
+        if (friendDataManager != null)
+            friendDataManager.onChangeFriendStatus -= DataManager.Instance.friend.UpdateState;
+    }
+
+    //============================================================================================================
+    public void OnApplicationQuit()
+    {
+        chatClient.SetOnlineStatus((int)OnlineState.Offline);
+
+        if (chatClient != null)
+        {
+            chatClient.SetOnlineStatus((int)OnlineState.Offline);
+            chatClient.Disconnect();
+        }
+            
+    }
+    //============================================================================================================
+    public void InitNetwork()
+    {
+        if (chatClient != null && chatClient.CanChat)
+            return;
+
+        //StartCoroutine(InitNetworkA());
+    }
+
+    /// <summary> 초기화 중인지 체크용 </summary>
+    public bool isInitialized { get; set; }
+    IEnumerator InitNetworkA()
+    {
+        isInitialized = false;
+        //채팅 버튼
+        buttonChat.isEnabled = false;
+
+        while (chatClient == null)
+            yield return null;
+
+        //if (chatClient == null)
+        //    yield break;
+
+        //Debug.Log(chatClient.State);
+
+        if (!chatClient.CanChat && (chatClient.State == ChatState.Uninitialized || chatClient.State == ChatState.Disconnected))
+        {
+            //개발 서버의 경우 채팅분리
+            if ( WWWManager.Instance.isDev )
+			{
+				chatClient.ChatRegion = "US";
+			}
+
+			else
+			{
+				chatClient.ChatRegion = "ASIA";
+			}            
+
+            nickName = userData.nickname;
+            ExitGames.Client.Photon.Chat.AuthenticationValues auth = new ExitGames.Client.Photon.Chat.AuthenticationValues(nickName);
+
+            chatClient.Disconnect();
+
+            if (!chatClient.Connect(ChatAppId, "1.0", auth))
+            {
+                Debug.LogWarning("채팅 서버 초기화 실패");
+            }
+        }
+
+        while (chatClient.State != ChatState.ConnectedToFrontEnd)
+        {
+            chatClient.Service();
+            yield return null;
+
+            if (chatClient.State == ChatState.ConnectedToFrontEnd)
+                break;
+        }
+
+        //yield return new WaitForSeconds(1f);
+
+        chatClient.Subscribe(ChannelsToJoinOnConnect, 0);
+        ChatChannel channel;
+        for (int i = 0; i < ChannelsToJoinOnConnect.Length; i++)
+        {
+            while (chatClient.TryGetChannel(ChannelsToJoinOnConnect[i], false, out channel) == false)
+            {
+                //chatClient.Service();
+                //Debug.Log(chatClient.State);
+
+                yield return null;                
+            }
+
+            //Debug.Log(channel.Name + ", " + channel.MessageCount);
+            channel.ClearMessages();
+            channel.MessageLimit = 1;
+        }
+
+        //테스트용
+        chatClient.Subscribe(new string[] { "Item2" }, 0);
+
+
+        float startTime = Time.time;
+        while (!chatClient.CanChat)
+        {
+            if (Time.time > startTime + 15f)
+            {
+                //chatClient.Disconnect();
+                //StartCoroutine(InitNetworkA());
+                yield break;
+            }
+
+            //Debug.Log(chatClient.State.ToString());
+
+            chatClient.Service();
+
+            yield return new WaitForSeconds(0.1f);
+        }
+        
+        ////채널 비우기
+        //if (ChannelsToJoinOnConnect != null && ChannelsToJoinOnConnect.Length > 0)
+        //{
+        //    chatClient.Subscribe(ChannelsToJoinOnConnect, 0);
+        //    chatClient.PublicChannels.Clear();
+        //}
+
+
+        string[] msg = { PrivateMessageType.CheckLogin.ToString(), UserData.Instance.deviceID };
+        chatClient.SendPrivateMessage(nickName, msg);
+        
+        //채팅 버튼
+        buttonChat.isEnabled = true;
+
+        isInitialized = true;
+        //chatClient.SetOnlineStatus(ChatUserStatus.Online);
+    }
+
+    /// <summary> 채널 설정. 게임 <-> 로비 전환용으로만 사용. 파티용 채널은 SetPartyChannel 사용 할 것 </summary>
+    /// <param name="channelType">바꿀 채널 타입</param>
+    /// <param name="roomID">채팅 타입이 게임일 경우에만 적용</param>
+	public void SetChannel(E_CHANNEL channelType, string roomID = "" )
+	{		
+        StartCoroutine(SetChannelA(channelType, roomID));
+	}
+    IEnumerator SetChannelA(E_CHANNEL channelType, string roomID)
+    {
+        //if (chatClient == null)
+        //    yield return StartCoroutine(this.InitNetworkA());
+
+        //채팅 초기화 될 때 까지 대기
+        while (chatClient == null || !chatClient.CanChat)
+        {
+            yield return new WaitForSeconds(0.2f);
+            if (chatClient.State == ChatState.ConnectingToNameServer)
+                break;
+        }
+            
+
+        string newChannelName = "";
+        switch (channelType)
+        {
+            case E_CHANNEL._LOBBY:
+                //채널명
+                newChannelName = "lobby";
+                break;
+            case E_CHANNEL._GAME:
+                //채널명
+                newChannelName = roomID;
+                break;
+            //default:
+            //    //채널명
+            //    newChannelName = "public";
+            //    break;
+        }
+
+        if (!string.IsNullOrEmpty(roomID))
+        {
+            newChannelName = roomID;
+            //Debug.Log("Subscribe : " + chatClient.Subscribe(new string[] { "public", "lobby", "inGame", selectedChannelName }) );
+        }
+
+        //메세지 카운트 초기화
+        messageCount = 0;
+
+        //기존 채널 삭제 (주의. 채널이 하나도 없으면 disconnect 됨)
+        if(!string.IsNullOrEmpty(currentChannelName))
+            yield return StartCoroutine(LeaveChannelA(currentChannelName));
+
+
+        //새로운 채널로 변경 & 추가
+        currentChannelName = newChannelName;
+        if (!chatClient.TryGetChannel(currentChannelName, false, out currentChannel))
+        {
+            string[] channels = { currentChannelName };
+            //chatClient.PublicChannels.Clear();
+            Debug.Log("currentChannelName: " + currentChannelName + ", Subscribe channel: " + chatClient.Subscribe(channels, 0));
+            while (!chatClient.TryGetChannel(currentChannelName, false, out currentChannel))
+                yield return new WaitForSeconds(0.2f);
+
+            //Debug.Log("selectedChannel: " + currentChannel.Name);
+        }
+        
+        //Debug.Log(chatClient.PublicChannels.ToStringFull());
+    }
+
+    /// <summary> 채널에서 나가기 </summary>
+    IEnumerator LeaveChannelA(string channelName)
+    {
+        if (string.IsNullOrEmpty(channelName))
+            yield break;
+        //if (chatClient == null)
+        //    yield return StartCoroutine(this.InitNetworkA());
+
+        //채팅 초기화 될 때 까지 대기
+        while (chatClient == null || !chatClient.CanChat)
+            yield return new WaitForSeconds(0.2f);
+
+        string[] channelNames = { channelName };
+        Debug.Log("Leave channel: " + channelName + ", " + chatClient.Unsubscribe(channelNames));
+    }
+
+    /// <summary> 파티 채널 설정. </summary>
+    public void SetPartyChannel(string _partyName)
+    {
+        StartCoroutine(SetPartyChannelA(_partyName));
+    }    
+    IEnumerator SetPartyChannelA(string _partyName)
+    {
+        Debug.Log("Set party channel: " + _partyName);
+
+        if (string.IsNullOrEmpty(_partyName))
+        {
+            Debug.Log("Set party channel failed. Party name is empty");
+            yield break;
+        }
+            
+
+        while (chatClient == null || !chatClient.CanChat)
+            yield return new WaitForSeconds(0.2f);
+        
+
+        if (!chatClient.TryGetChannel(_partyName, true, out currentPartyChannel))
+        {   
+            userData.party = _partyName;
+                
+            
+            string[] channels = { _partyName };
+            //chatClient.PrivateChannels.Clear();
+
+            Debug.Log("partyName: " + _partyName + ", Subscribe channel: " + chatClient.Subscribe(channels, 0));
+            //chatClient...Subscribe()
+            while (!chatClient.TryGetChannel(_partyName, false, out currentPartyChannel))
+                yield return new WaitForSeconds(0.2f);
+
+            Debug.Log("selectedChannel: " + currentChannel.Name);
+            Debug.Log("selectedPartyChannel: " + currentPartyChannel.Name);
+
+            //string[] msg = { "curPartyName", _partyName };
+            Dictionary<string, string> msg = new Dictionary<string, string>();
+            msg.Add("party", _partyName);
+            chatClient.SetOnlineStatus((int)OnlineState.Lobby, msg);
+        }
+    }
+
+    /// <summary> 파티 나갈때 파티 채팅 채널에서도 나가야 됨 </summary>
+    public void LeavePartyChannel(string _partyName)
+    {
+        StartCoroutine(LeavePartyChannelA(_partyName));
+    }
+    IEnumerator LeavePartyChannelA(string _partyName)
+    {
+        Debug.Log("Public channels count: " + chatClient.PublicChannels.Count);
+
+        while (chatClient == null || !chatClient.CanChat)
+            yield return new WaitForSeconds(0.2f);
+        
+        string[] channels = { _partyName };
+
+        Debug.Log("partyName: " + _partyName + ", Unsubscribe channel: " + chatClient.Unsubscribe(channels));
+
+        while (chatClient.TryGetChannel(_partyName, false, out currentPartyChannel))
+            yield return new WaitForSeconds(0.2f);
+
+        currentPartyChannel = null;
+        _partyName = null;
+
+        Debug.Log("Public channels count: " + chatClient.PublicChannels.Count);
+
+        //string[] msg = { "curPartyName", null };
+        Dictionary<string, string> msg = new Dictionary<string, string>();
+        msg.Add("party", "");
+        chatClient.SetOnlineStatus((int)OnlineState.Lobby, msg);
+
+        yield break;
+    }
+
+    public void Disconnect()
+    {
+        if (chatClient != null)
+            chatClient.Disconnect();
+
+        Debug.Log("Disonnected from chat server");
+    }
+    float lastreconnectionTime = 0f;
+    float reconnectionInterval = 0f;
+    //============================================================================================================
+    float lastTimeSendService;
+    float intervalSendService = 1f;
+    public void Update()
+    {
+        //Debug.LogWarning(Time.frameCount + ", " + chatClient.GetHashCode());
+		if (chatClient != null && chatClient.CanChat && Time.time > lastTimeSendService + intervalSendService)
+        {
+            //Debug.Log(chatClient.State.ToString() + ", " + chatClient.PublicChannels.StripToStringKeys());
+
+            chatClient.Service();
+
+            lastTimeSendService = Time.time;            
+        }
+        //Debug.LogWarning(chatClient.State.ToString() + ", " + chatClient.PublicChannels.StripToStringKeys());
+        //채팅 서버 접속 상태에 따라서 버튼 활성/비활성 & 재접속 시도
+        if (chatClient != null)
+        {
+            if (chatClient.CanChat)
+            {
+                buttonChat.isEnabled = true;
+            }
+            else
+            {
+                buttonChat.isEnabled = false;
+                //Debug.Log(chatClient.State + ", " + Time.unscaledTime + ", " + lastreconnectionTime + ", " + reconnectionInterval);
+
+                if (!chatClient.CanChat && Time.unscaledTime > lastreconnectionTime + reconnectionInterval)
+                {
+                    Debug.Log("Try recconnect chat server");
+                    //chatClient.Disconnect();
+                    StartCoroutine(InitNetworkA());
+                    lastreconnectionTime = Time.unscaledTime;
+                    reconnectionInterval = 20f;
+                }
+            }
+        }
+        else
+        {
+            buttonChat.isEnabled = false;
+        }
+
+        if (!buttonChat.isEnabled && panelChat.activeInHierarchy)
+            panelChat.SetActive(false);
+        
+
+
+        if (!panelChat.activeInHierarchy)
+        {
+            if (Time.time > lastPreviewUpdatedTime + previewTime)
+            {
+                if (panelPreview.alpha > 0)
+                    panelPreview.alpha -= 1 / previewFadeoutTime * Time.deltaTime;
+            }
+            else
+            {
+                if (panelPreview.alpha < 1f)
+                    panelPreview.alpha = 1f;
+            }
+            
+        }
+
+		//환경설정 채팅 값 적용
+		if( Option.Instance.isShowChatMsg )
+		{
+			panelPreview.gameObject.SetActive(true);
+		}
+
+		else
+		{
+			panelPreview.gameObject.SetActive(false);
+		}        
+
+        //게임 안에서는 채팅 아이콘 모양이 달라지게. 로그인 씬에서는 채팅 아이콘 안 보이게
+        #region region: 채팅아이콘 변경
+        if (spriteIngame && spriteLobby)
+        {            
+            if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name == "Lobby")
+            {
+                spriteIngame.enabled = false;
+                spriteLobby.enabled = true;
+            }
+            else if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name == "LogIn")
+            {
+                spriteIngame.enabled = false;
+                spriteLobby.enabled = false;
+            }
+            else
+            {
+                spriteIngame.enabled = true;
+                spriteLobby.enabled = false;
+            }
+        }
+        #endregion
+
+    }
+
+    //채팅 버튼 눌렀을 때 패널 보여주고 숨기고, 토글.
+    public void OnClickChatButton()
+    {
+		if( panelChat.activeInHierarchy )
+		{
+			panelChat.SetActive(false);
+
+
+
+
+#if !UNITY_EDITOR
+    #if UNITY_ANDROID
+            if( AndroidKeyboard.TouchScreenKeyboard.instance.active )
+		    {
+			    AndroidKeyboard.TouchScreenKeyboard.instance.active = false;
+		    }
+    #endif
+#endif
+        }
+
+        else
+		{
+			panelChat.SetActive(true);
+			this.chatScrollBar.value = 1.0f;
+
+#if !UNITY_EDITOR
+    #if UNITY_ANDROID
+            if ( AndroidKeyboard.TouchScreenKeyboard.instance.active )
+			{
+				AndroidKeyboard.TouchScreenKeyboard.instance.active = true;
+			}
+    #endif
+#endif
+        }
+    }
+
+    public int whisperChatWidth = 1250;
+    public float whisperPosX = 70;
+
+    /// <summary> 채팅 대상 버튼을 눌렀을 때 </summary>
+    public void OnClickChangeChatTarget()
+    {
+        if (NetworkChat.Instance.chatTarget == ChatTarget.All)
+        {
+            NetworkChat.Instance.chatTarget = ChatTarget.Party;
+            if (labelChangeChatTarget)
+                //labelChangeChatTarget.text = "파티";
+                labelChangeChatTarget.text = LocalizationManager.GetText("Chat_Party");
+        }
+        else if (NetworkChat.Instance.chatTarget == ChatTarget.Party && ClanManager.Instance.clan != null)
+        {
+            NetworkChat.Instance.chatTarget = ChatTarget.Clan;
+            if (labelChangeChatTarget)
+                //labelChangeChatTarget.text = "클랜";
+                labelChangeChatTarget.text = "Clan";//LocalizationManager.GetText("Chat_Whisper");
+        }
+        else if (NetworkChat.Instance.chatTarget == ChatTarget.Party || NetworkChat.Instance.chatTarget == ChatTarget.Clan)
+        {
+            NetworkChat.Instance.chatTarget = ChatTarget.Whisper;
+            if (labelChangeChatTarget)
+                //labelChangeChatTarget.text = "귓속말";
+                labelChangeChatTarget.text = LocalizationManager.GetText("Chat_Whisper");
+        }
+        else
+        {
+            NetworkChat.Instance.chatTarget = ChatTarget.All;
+            if (labelChangeChatTarget)
+                //labelChangeChatTarget.text = "전체";
+                labelChangeChatTarget.text = LocalizationManager.GetText("Chat_All");
+        }
+
+		// 귓속말 일때만 귓속말 상대방 입력창 뜨게 함
+		if (NetworkChat.Instance.chatTarget.Equals(ChatTarget.Whisper))
+        {
+            chatInput.transform.localPosition = new Vector3(whisperPosX, 0, 0);
+            if(chatInput.GetComponent<UISprite>())
+                chatInput.GetComponent<UISprite>().width = whisperChatWidth;
+            else
+                chatInput.GetComponent<UILabel>().width = whisperChatWidth;
+            whisperTargetName.gameObject.SetActive(true);
+        }
+        else
+        {
+            chatInput.transform.localPosition = new Vector3(-79, 0, 0);
+            if (chatInput.GetComponent<UISprite>())
+                chatInput.GetComponent<UISprite>().width = 1503;
+            else
+                chatInput.GetComponent<UILabel>().width = 1503;
+            whisperTargetName.gameObject.SetActive(false);
+        }
+
+        chatInput.GetComponentInChildren<UISprite>().ResetAndUpdateAnchors();
+    }
+        
+    public void OnSubmitInput()
+    {
+        string inputChat = chatInput.value;
+        
+        //아무말 안 쓰면 채팅 안 한 걸로..
+        if (!string.IsNullOrEmpty(inputChat))
+        {
+            //입력한 채팅 내뇽을 채팅창에 보여주고, 입력 칸은 초기화
+            //string finalText = string.Format("[FFFFFF]{0}: {1}", id, inputChat);
+            //채팅 내용 전송. photon 서버로 보내기. 동기화
+            SendChat(inputChat);
+
+            //입력창 초기화
+            chatInput.value = "";
+        }
+    }
+
+    public void AddTextToPreview(string message)
+    {
+        if (!panelPreview || !labelPreview)
+            return;
+        
+        labelPreview.Add(message);
+        lastPreviewUpdatedTime = Time.time;
+    }
+
+    // 도배체크용
+    string[] oldMessage = new string[3];
+    int oldMessageIndex = 0;
+
+    float oldChatTime = 0;
+    int chatBanCount = 4;
+    int chatBanCountNumber = 4;
+    //int chatBanCountlong = 12;
+    bool isChatBan = false;
+    bool isChat = false;
+    float chatBanTime = 0;
+
+
+    //============================================================================================================
+    public void SendChat(string message)
+    {
+        if (chatClient == null)
+        {
+            //채팅서버에 접속되어 있지 않은 경우
+            Debug.LogWarning("채팅 서버 초기화 안 되어 있음");
+            return;
+        }
+
+#region 도배체크 2가지 (10초안에 5번 말하면, 최근 한말중 같은말이 3개이상일때)
+        // 채팅금지 (30초동안 가만히있으면 풀림)
+        if (chatBanTime + 30 <= Time.time)
+            isChatBan = false;
+        if (isChatBan)
+        {
+            //string warningMessage = "[FFB6C1]" + "연속된 채팅으로 인해 채팅이 제한되셨습니다.[-]";
+            string warningMessage = "[FFB6C1]" + LocalizationManager.GetText("UI_Chat_01");
+            ShowMessage(warningMessage);
+            return;
+        }
+
+        // 빠른 시간안에 여러번 채팅한 도배 처리
+        if (isChat && oldChatTime + 10f >= Time.time)
+        {
+            chatBanCount -= 1;
+        }
+        else if(isChat && oldChatTime + 10f < Time.time)
+        {
+            isChat = false;
+            chatBanCount = chatBanCountNumber;
+        }
+
+        if (chatBanCount <= 0)
+        {
+            chatBanCount = chatBanCountNumber;
+            chatBanTime = Time.time;
+            isChatBan = true;
+        }
+
+        // 같은 말 사용 도배 처리
+        int count = 0;
+        for (int i = 0; i < oldMessage.Length; i++)
+        {
+            if (message.Equals(oldMessage[i]))
+                count += 1;
+        }
+
+        if (count >= 2)
+        {
+            //string warningMessage = "[FFB6C1]" + "반복적인 채팅을 너무 많이 하셨습니다.[-]";
+			string warningMessage = "[FFB6C1]" + LocalizationManager.GetText("UI_Chat_02");
+			ShowMessage(warningMessage);
+            return;
+        }
+#endregion
+
+        // 메세지 보내기전에 필터링 해서 저장한 내용으로 보내기 위함
+        string sendMessage = chatFilter.GetFilteringChat(message);
+
+        Debug.Log("SendChat.CanChat : " + chatClient.CanChat);
+        if (chatTarget == ChatTarget.All)
+        {
+            if (currentChannelName == "Region")
+                sendMessage = "[FFE400]" + message;
+
+            sendMessage = "[FFFFFF]" + sendMessage + "[-]";
+            chatClient.PublishMessage(currentChannelName, sendMessage);
+        }
+            
+        else if (chatTarget == ChatTarget.Party)
+        {
+            if(string.IsNullOrEmpty(userData.party))
+                //ShowMessage("[FFFF00]현재 파티에 소속되어 있지 않습니다.[-]");
+                ShowMessage(LocalizationManager.GetText("UI_Chat_03"));
+            else
+				Debug.Log("SendChat.chatResponse : " + chatClient.PublishMessage(userData.party, sendMessage) + " / msg : " + message);            
+        }
+        else if (chatTarget == ChatTarget.Clan)
+        {
+            Debug.Log("SendChat.chatResponse : " + chatClient.PublishMessage(ClanManager.Instance.clan.id.ToString(), sendMessage) + " / msg : " + message);
+        }
+
+        else if (chatTarget == ChatTarget.Whisper)
+        {
+            string userName = whisperTargetName.value;
+            string[] msg = { PrivateMessageType.Whisper.ToString(), WhisperMessageType.Whisper.ToString(), sendMessage };
+            // 상태를 알기위해 채팅친구에 추가
+            chatClient.AddFriends(new string[] { userName });
+            chatClient.SendPrivateMessage(userName, msg);
+        }
+
+        // 도배체크용 이전메세지 3개까지 저장함
+        oldMessage[oldMessageIndex] = message;
+        oldMessageIndex += 1;
+        if (oldMessageIndex >= 3)
+            oldMessageIndex = 0;
+
+        if(!isChat)
+        {
+            oldChatTime = Time.time;
+            isChat = true;
+        }
+
+        chatScrollBar.value = 1;
+    }
+
+    public void SendItemMessage(string message, string GetType)
+    {
+		//message = {"type":"draw", "name":"5성AK"};	//json형식으로?
+		// message = "[FFE400]" + message;
+		string[] msg = { GetType, message };
+		//chatClient.PublishMessage("Item", msg);
+        chatClient.PublishMessage("Item2", msg);
+    }
+    //============================================================================================================
+    /// <summary> UI에 받은 채팅 메시지 표시 </summary>
+    void ShowMessage(string text)
+    {
+        if (!chatLog)
+            return;
+            //chatLog = GameObject.Find("ChatLog").GetComponent<UITextList>();
+
+        chatLog.Add(text);
+        AddTextToPreview(text);
+    }
+    //============================================================================================================
+#region #region IChatClientListener 콜백
+    public void OnConnected()
+    {
+        Debug.Log("Connected to chat server");
+
+        //친구 온라인 상태 받아오기 위해 채팅 서버에서 친구 추가
+        if (chatClient != null)
+        {
+            NetworkChat.Instance.AddChatFriend(DataManager.Instance.friend.myFriends);
+        }
+
+        if (SceneLobby.Instance)
+            SetChannel(E_CHANNEL._LOBBY);
+        else
+            SetChannel(E_CHANNEL._GAME, userData.lastRoom);
+
+        if (!string.IsNullOrEmpty(userData.party))
+            SetPartyChannel(userData.party);
+
+    }
+    public void OnDisconnected()
+    {
+        isPanelOpened = false;
+        labelPreview.Clear();
+		//GameProcess.Instance.networkChat.labelPreview.textLabel.text = GameProcess.Instance.networkChat.chatLog.textLabel.text;
+
+		Debug.Log("Disconnected from chat server" + chatClient.DisconnectedCause.ToString());
+        //chatLog.Clear();
+        //labelPreview.textLabel.text = "";
+        //chatLog.textLabel.text = "";
+    }
+    public void OnChatStateChange(ChatState state)
+    {
+        // use OnConnected() and OnDisconnected()
+        // this method might become more useful in the future, when more complex states are being used.
+    }
+    public void OnSubscribed(string[] channels, bool[] results)
+    {
+        for (int i = 0; i < channels.Length; i++)
+        {
+            //Debug.Log("OnSubscribed channel : " + channels[i]);
+            //chatClient.PublishMessage(channel, "공지사항.... 열심히 잘 하자");
+        }
+    }
+    public void OnUnsubscribed(string[] channels)
+    {
+    }
+    //============================================================================================================
+    void Quit()
+    {
+#if UNITY_EDITOR
+        UnityEditor.EditorApplication.isPlaying = false;
+#endif
+        Application.Quit();
+    }
+
+    public void OnGetMessages(string channelName, string[] senders, object[] messages)
+    {
+#if UNITY_EDITOR
+        //Debug.Log("channelName: " + channelName + ", senders : " + senders.Length + ", msgs : " + messages.Length);
+        //Debug.Log("senders[0] : " + senders[0]);
+        Debug.Log("OnGetMessages, " + senders[0] + " : " + messages[messages.Length - 1]);
+#endif
+
+        if (!messages[0].GetType().Equals(System.String.Empty.GetType()))
+        {
+            string[] recievedMessage = (string[])messages[0];
+            if (recievedMessage[0].ToString() == "All")
+            {
+                AllMessageType messageType = AllMessageType.End;
+
+                if (recievedMessage[1].ToString().Equals(AllMessageType.Exit.ToString()))
+                {
+                    messageType = AllMessageType.Exit;
+                }
+
+                if (messageType.Equals(AllMessageType.Exit))
+                {
+                    //PopUp.Instance.Call(E_POP._OK, this, "UserKick", "안내메세지", "접속이 종료되었습니다.");
+                    PopUp.Instance.Call(E_POP._OK, this, "UserKick", "", LocalizationManager.GetText("UI_PopUp_91"));
+                    StartCoroutine("UserKickTimer");
+                }
+                return;
+            }
+        }
+
+
+
+        string sender = senders[senders.Length-1];
+        object message = messages[messages.Length-1];
+        string text = "";
+
+        switch (channelName)
+        {
+            case "lobby":
+                text = "[FFFFFF]" + sender + ": " + message.ToString();
+                break;
+            case "public":
+                text = "[00FF00]" + sender + ": " + message.ToString();
+                break;
+            case "private":
+                text = "[7F7F00]" + sender + ": " + message.ToString();
+                break;
+            case "Item":
+            case "Item2":
+                string[] itemMessages = message as string[];
+                if (itemMessages != null)
+                {
+                    if (itemMessages.Length > 1)
+                    {
+                        string localizing = null;
+                        string type = itemMessages[0];
+                        string itemName = itemMessages[1];
+                        if (type == "gained")
+                        {
+                            localizing = LocalizationManager.GetText("Item_Gained_Message");
+                        }
+                        else if (type == "byfusion")
+                        {
+                            localizing = LocalizationManager.GetText("Item_Fusion_Message");
+                        }
+
+                        //로컬라이징
+                        // localizing 데이타 예시:
+                        //	영문일 경우: "[sender] gained [item]"
+                        //	한글일 경우: "[sender]님이 [item]을 획득했습니다."
+                        if(localizing.Contains("sender") && localizing.Contains("item"))
+                        {
+                            localizing = localizing.Replace("[sender]", sender).Replace("[item]", itemName);
+
+                            text = "[FFE400]" + localizing;
+                        }
+                        else
+                        {
+#if UNITY_EDITOR
+                            Debug.LogWarning("Invalid localizing format : " + message.ToString());
+#endif
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        text = "[FFE400]" + message.ToString();
+                    }                    
+                }
+                else
+                {
+                    text = "[FFE400]" + message.ToString();                    
+                }
+                break;
+
+            case "System":
+                text = message.ToString();
+                break;
+
+            //게임 채널일 때
+            default: text = "[FFFFFF]" + sender + ": " + message.ToString();
+                break;
+        }
+        //파티의 경우
+        if (string.Equals(channelName, userData.party))
+            text = "[00FFFF][파티]" + sender + ": " + message.ToString();// + "[-]";
+
+                
+
+            ShowMessage(text);
+
+            messageCount++;
+    }
+    //============================================================================================================
+    public void OnPrivateMessage(string sender, object _message, string channelName)
+    {
+        if (onGetPrivateMessage != null)
+            onGetPrivateMessage(sender, _message, channelName);
+
+#if UNITY_EDITOR
+        Debug.Log("sender: " + sender + " / messsge: " + _message + " / channelName: " + channelName);
+#endif
+        if (_message.GetType() != Type.GetType("System.String[]"))
+            return;
+
+        //message는 {"PartyMessage", PartyMessageType} 같은 형식으로 날라온다.
+        //필요하면 알아서 잘 늘리고, 잘 파싱해서 쓰자
+        string[] recievedMessage = (string[])_message;
+        PrivateMessageType messageType = PrivateMessageType.Whisper;
+        if (recievedMessage[0] == PrivateMessageType.Party.ToString())
+            messageType = PrivateMessageType.Party;
+        else if (recievedMessage[0] == PrivateMessageType.AddFriend.ToString())
+            messageType = PrivateMessageType.AddFriend;
+        else if (recievedMessage[0] == PrivateMessageType.CheckLogin.ToString())
+            messageType = PrivateMessageType.CheckLogin;
+
+        string pmt = recievedMessage[1];
+
+        string[] messageForDebug = (string[])_message;
+        string debugString = "";
+        for(int i = 0; i < messageForDebug.Length; i++)
+        {
+            debugString += messageForDebug[i];
+            debugString += "";
+        }
+
+#if UNITY_EDITOR
+        Debug.Log("OnPrivateMessage- sender: " + sender + ", message: " + recievedMessage);
+#endif
+
+        PartyWindow partyWindow = PartyWindow.Instance;
+
+        //파티 메시지일 경우의 처리
+        if (messageType == PrivateMessageType.CheckLogin)
+        {
+#if UNITY_EDITOR
+            Debug.Log((string)recievedMessage[1] + ", " + UserData.Instance.deviceID);
+#endif
+            if ((string)recievedMessage[1] != UserData.Instance.deviceID)
+            {
+                //Debug.Log("Same id has been logged in");
+                //PopUp.Instance.Call(E_POP._OK, this, "Quit", "안내", "다른 기기에서 같은ID로 로그인되어 접속이 종료됩니다.");
+                PopUp.Instance.Call(E_POP._OK, this, "Quit","", LocalizationManager.GetText("UI_PopUp_92"));
+                Application.Quit();
+            }
+            else
+            {
+                //Debug.Log("Login success");
+            }
+                
+        }
+        else if(messageType == PrivateMessageType.Party)
+        {
+#region
+            //내가 나한테 보낸건 무시
+            if (sender == userData.nickname)
+                return;
+
+            //파티 메시지 관련
+            if (pmt.ToString() == PartyMessageType.PMT_InviteDeathmatch.ToString() || pmt.ToString() == PartyMessageType.PMT_InviteTeammatch.ToString())
+            {
+                GameMode gameMode = GameMode.Deathmatch;
+                if(pmt == PartyMessageType.PMT_InviteTeammatch.ToString())
+                    gameMode = GameMode.Teammatch;
+
+                Debug.Log("파티 초대 메시지: " + gameMode + ", " + recievedMessage[2]);
+
+                //초대 팝업 띄우기
+                partyWindow.ShowInviteMessage(sender, gameMode, recievedMessage[2]);
+                //PopUp.Instance.Call(E_POP._OK, null, null, "초대", sender + "님으로 부터 파티 초대가 왔습니다.");
+
+                
+                return;
+            }
+            //초대를 받은 유저가 수락을 누르면 방장이 받게 되는 메시지
+            if (pmt.ToString() == PartyMessageType.PMT_TryJoin.ToString())
+            {
+                //방이 없는 경우
+                if (string.IsNullOrEmpty(userData.party))
+                {
+                    string[] msg = { PrivateMessageType.Party.ToString(), PartyMessageType.PMT_JoinFailed.ToString(), "0" };
+                    chatClient.SendPrivateMessage(sender, msg);
+                    return;
+                }
+
+                //이미 참여해 있는 경우
+                if (userData.partyMembers.Find(x=>x.nick == sender) != null)
+                {
+                    string[] msg = { PrivateMessageType.Party.ToString(), PartyMessageType.PMT_JoinFailed.ToString(), "2" };
+                    chatClient.SendPrivateMessage(sender, msg);
+                    return;
+                }
+
+                //입장 가능한 상태면 입장 하라고 요청함
+                if (partyWindow.canJoin)
+                {
+                    List<string> pm = new List<string>();
+                    foreach (InfoFriend friend in userData.partyMembers)
+                    {
+                        pm.Add(friend.nick);
+                        pm.Add(friend.id);
+                        pm.Add(friend.tier.ToString());
+                    }
+                    string partyMembersInfo = "";
+                    for(int i = 0; i < pm.Count; i++)
+                    {                        
+                        partyMembersInfo += pm[i];
+                        if(i < pm.Count - 1)
+                            partyMembersInfo += ",";
+                    }                    
+                    Debug.Log(partyMembersInfo);
+
+                    //msg는 다음과 같이 구성되어야 한다. {PrivateChatMessageType, PartyMessageType, PartyType, 파티원정보}
+                    string[] msg = { PrivateMessageType.Party.ToString(), PartyMessageType.PMT_RequestJoin.ToString(), userData.partyType.ToString(), partyMembersInfo };
+                    chatClient.SendPrivateMessage(sender, msg);
+                    return;
+                }
+                //풀방인 경우
+                else
+                {
+                    string[] msg = { PrivateMessageType.Party.ToString(), PartyMessageType.PMT_JoinFailed.ToString(), "1" };
+                    chatClient.SendPrivateMessage(sender, msg);
+                    return;
+                }                
+            }
+            //입장하려는 애가 받는 메시지
+            if (pmt.ToString() == PartyMessageType.PMT_JoinFailed.ToString())
+            {
+                //PopUp.Instance.Call(E_POP._OK, partyWindow, "StopWaitToJoin", "오류", "파티에 들어갈 수 없습니다.");
+                PopUp.Instance.Call(E_POP._OK, partyWindow, "StopWaitToJoin", "", LocalizationManager.GetText("UI_PopUp_93"));
+
+                partyWindow.LeaveParty();
+
+                //Todo: 입장 못한 이유에 따라서 메시지 처리
+
+            }
+
+            //입장하려는 애가 받는 메시지
+            if (pmt.ToString() == PartyMessageType.PMT_RequestJoin.ToString())
+            {
+                partyWindow.StopWaitToJoin();
+
+                //recievedMessage[2]에 파티 타입, recievedMessage[3]에 입장해있는 유저들 닉네임,id,tier 정보가 string으로 함께 날라옴
+                //파티 타입
+                string pt = recievedMessage[2];
+                GameMode partyType = GameMode.Deathmatch;
+                if (pt == GameMode.Deathmatch.ToString())
+                    partyType = GameMode.Deathmatch;
+                else if (pt == GameMode.Teammatch.ToString())
+                    partyType = GameMode.Teammatch;
+                
+                //파티에 있는 유저들
+                string pm = recievedMessage[3];
+                string[] partyMembersInfo = pm.Split(',');
+
+                string debugText = "";
+                for(int i = 0; i < partyMembersInfo.Length; i++)
+                {
+                    debugText += partyMembersInfo[i];
+                    debugText += " ";
+                }
+                Debug.Log(debugText);
+
+
+                //입장을 알림
+                //msg는 {PrivateChatMessageType, PartyMessageType, nickname, id, tier}로 구성되어야 함
+                //티어
+                int tier = DataManager.Instance.play.GetHiTier();
+
+                string[] msg ={
+                    PrivateMessageType.Party.ToString(),
+                    PartyMessageType.PMT_Join.ToString(),
+                    userData.nickname, userData.userID,
+                    tier.ToString()
+                };
+                chatClient.SendPrivateMessage(sender, msg);
+
+                //입장    
+                partyWindow.JoinParty(sender, partyType, partyMembersInfo);                
+            }
+
+            //방장이 받는 메시지
+            if (pmt.ToString() == PartyMessageType.PMT_Join.ToString())
+            {
+                //recievedMessage[2]에 입장하는 유저 id, [3]에 입장하는 유저 tier가 옴
+                //파티 타입
+                string userID = recievedMessage[2];
+                int tier;
+                int.TryParse(recievedMessage[3], out tier);
+
+                //들어온애 입장 처리
+                partyWindow.OnJoinPartyMember(sender, userID, tier);
+            }
+
+            //방에 있는 다른 파티원이 받는 메시지
+            if (pmt.ToString() == PartyMessageType.PMT_NewPartyMember.ToString())
+            {
+                string userID;
+                string nickname;
+                int tier= -1;
+
+                if (recievedMessage.Length < 5)
+                    return;
+
+                List<InfoFriend> friends = new List<InfoFriend>();
+                for(int i = 0; i < (recievedMessage.Length-2)/3; i++)
+                {                    
+                    userID = recievedMessage[i * 3 + 2];
+                    nickname = recievedMessage[i * 3 + 3];
+                    int.TryParse(recievedMessage[i * 3 + 4], out tier);
+
+                    Debug.Log(userID + ", " + nickname + ", " + tier);
+
+                    //내 친구로 등록된 애가 아니면 서버에서 닉네임으로 검색한 다음, 임시 만들어서 등록
+                    InfoFriend friend = dataManager.friend.myFriends.Find(x => x.nick == nickname);
+                    if (friend == null)
+                    {
+                        if(userID == UserData.Instance.userID)
+                        {
+                            friend = new InfoFriend();
+                            friend.id = userID;
+                            friend.nick = nickname;
+                            int rpDeathmatch = DataManager.Instance.play.infoDeath.rp;
+                            int rpTeammatch = DataManager.Instance.play.infoTeam.rp;
+                            //friend.rp = Mathf.Max(rpDeathmatch, rpTeammatch);
+                            friend.rpDeathmatch = rpDeathmatch;
+                            friend.rpTeammatch = rpTeammatch;
+                            friend.tier = tier;
+                        }
+                        else
+                        {
+                            friend = new InfoFriend();
+                            friend.id = userID;
+                            friend.nick = nickname;
+                            friend.tier = tier;
+                            //friend.rp = 1000;
+                            friend.rpDeathmatch = 1000;
+                            friend.rpTeammatch = 1000;
+                        }
+
+                        
+                    }
+                    friends.Add(friend);
+
+                    //채팅 친구로 등록
+                    AddChatFriend(friend);
+                }
+                //들어온애 입장 처리                
+                partyWindow.ResetPartyMember(friends);
+
+                //if (userData.partyMembers.Find(x => x.id == userID) == null)
+                //partyWindow.AddPartyMember(userID, nickname, tier);
+
+                //userID = recievedMessage[2];
+                //nickname = recievedMessage[3];
+                //int.TryParse(recievedMessage[4], out tier);
+
+
+                if (SceneLobby.Instance.currentMenuState == LobbyMenuState.Main)
+                    chatClient.SetOnlineStatus((int)OnlineState.Lobby);
+                else
+                    chatClient.SetOnlineStatus((int)OnlineState.DND);
+
+            }
+
+            if(pmt.ToString() == PartyMessageType.PMT_CancleMatching.ToString())
+            {
+                //MatchingWindow.Instance.PartyMatchingCancle();
+            }
+
+            if(pmt.ToString() == PartyMessageType.PMT_Leave.ToString())
+            {
+                string nick = recievedMessage[2];
+                partyWindow.RemovePartyMember(nick);
+            }
+
+            //강퇴 당하는 애가 받는 메시지
+            if (pmt.ToString() == PartyMessageType.PMT_Kick.ToString())
+            {
+                string nick = recievedMessage[2];
+                //당사자는 쫓겨나고
+                if(nick == nickName)
+                {
+                    partyWindow.LeaveParty();
+                    //PopUp.Instance.Call(E_POP._OK, null, null, "알림", "파티에서 쫓겨났습니다.");
+                    PopUp.Instance.Call(E_POP._OK, null, null, "" , LocalizationManager.GetText("UI_PopUp_94"));                  
+                }
+				//다른 애들은 그냥 지우고   
+				else
+                    partyWindow.RemovePartyMember(nick);
+            }
+
+            if(pmt.ToString() == PartyMessageType.PMT_JoinGame.ToString())
+            {
+                //string roomName = recievedMessage[2];
+
+                if (PunTeams.Team.red.ToString() == recievedMessage[3])
+                    MatchingManager.Instance.curPlayerTeam = PunTeams.Team.red;
+                else if (PunTeams.Team.blue.ToString() == recievedMessage[3])
+                    MatchingManager.Instance.curPlayerTeam = PunTeams.Team.blue;
+                else
+                    MatchingManager.Instance.curPlayerTeam = PunTeams.Team.none;
+
+                //DeathmatchLobby.Instance.JoinRoom(roomName);
+                
+            }
+            if (pmt.ToString() == PartyMessageType.PMT_JoinGameFailed.ToString())
+            {
+                if (string.IsNullOrEmpty(userData.party))
+                    return;
+
+                //PopUp.Instance.Call(E_POP._OK, null, null, "안내", "파티원이 게임 입장에 실패하였습니다.");
+                PopUp.Instance.Call(E_POP._OK, null, null, "" , LocalizationManager.GetText("UI_PopUp_95"));
+            }
+			if (pmt.ToString() == PartyMessageType.PMT_StartGame.ToString())
+            {
+                string mapName = recievedMessage[2];
+                //혹시라도 나중에 이거 쓸꺼면 맵id로 넘겨야 함
+                //StartCoroutine(MatchingManager.Instance.LoadLevelAsync(mapName));
+            }
+
+#endregion
+        }
+        else if(messageType == PrivateMessageType.AddFriend)
+        {
+            //내가 나한테 보낸건 무시
+            if (sender == userData.nickname)
+                return;
+
+            //내 친구에 추가
+            //id, nick, tier
+            InfoFriend infoFriend = new InfoFriend();
+            infoFriend.id = recievedMessage[1];
+            infoFriend.nick = recievedMessage[2];
+            int.TryParse(recievedMessage[3], out infoFriend.tier);
+            dataManager.friend.myFriends.Add(infoFriend);
+
+            //채팅 친구에 추가
+            NetworkChat.Instance.AddChatFriend(dataManager.friend.myFriends);
+            //List<string> ss = new List<string>();
+            //for (int i = 0; i < DataManager.Instance.friend.myFriends.Count; i++)
+            //{
+            //    ss.Add(DataManager.Instance.friend.myFriends[i].nick);
+            //    string[] s = ss.ToArray();
+            //    chatClient.AddFriends(s);
+            //}
+
+            //온라인 상태 갱신 (미리 받아놨던거)
+            UpdateFriendStatus(infoFriend);
+
+        }
+        else if(messageType.Equals(PrivateMessageType.Whisper))
+        {
+            // 특정 유저 강퇴기능
+            if (pmt.Equals(WhisperMessageType.Kick.ToString()) && sender.Equals(userData.nickname))
+            {
+                //PopUp.Instance.Call(E_POP._OK, null, null, "안내메세지", kickTargetNick + "님을 게임에서 강퇴시켰습니다.");
+                PopUp.Instance.Call(E_POP._OK, null, null, "", kickTargetNick + LocalizationManager.GetText("UI_PopUp_96"));
+            }
+			else if (pmt.Equals(WhisperMessageType.Kick.ToString()))
+            {
+                UserKick();
+            }
+
+            // 귓속말용 수신받은 메세지
+            string whisperMessage = "";
+            if (recievedMessage.Length >= 3)
+                whisperMessage = recievedMessage[2];
+
+            // 귓속말 받고 보내고의 채팅창에 뜨는 메세지
+            if(pmt.Equals(WhisperMessageType.Whisper.ToString()))
+            {
+                if(sender.Equals(userData.nickname))
+                {
+                    if(userData.nickname.Equals(whisperTargetName.value))
+                    {
+                        //ShowMessage("[FFB6C1]자기 자신에게는 귓속말을 보낼 수 없습니다.[-]");
+                        ShowMessage(LocalizationManager.GetText("UI_PopUp_97"));
+                    }
+					else
+                    {
+                        //ShowMessage("[FF00FF]" + whisperTargetName.value + "님에게 보낸 귓속말 : " + whisperMessage + "[-]");
+                        //ShowMessage("[FF00FF]" + whisperTargetName.value + LocalizationManager.GetText("5200180022") + whisperMessage + "[-]");
+                        ShowMessage("[FF00FF]" + whisperTargetName.value + LocalizationManager.GetText("UI_PopUp_98") + whisperMessage + "[-]");
+                        StartCoroutine(WhisperRecievedCheck());
+                    }
+                }
+                else
+                {
+                    //ShowMessage("[FF00FF]" + sender + "님이 보낸 귓속말 : " + whisperMessage + "[-]");
+                    //ShowMessage("[FF00FF]" + sender + LocalizationManager.GetText("5200180022") + whisperMessage + "[-]");
+                    ShowMessage("[FF00FF]" + sender + LocalizationManager.GetText("UI_PopUp_99") + whisperMessage);
+                }
+			}
+        }
+
+    }
+    
+    /// <summary> 상대방이 귓속말을 받았는지 확인용 </summary>
+    IEnumerator WhisperRecievedCheck()
+    {
+        ChatFriendStatus chatFriend = chatFriendStatus.Find(x => x.nickName == whisperTargetName.value);
+        // 2초 기다린 후에 메세지 받았는지 체크 (상대방의 상태정보 받아오는 시간을 충분히 기다리기 위함)
+        if (chatFriend == null)
+        {
+            yield return new WaitForSeconds(2);
+        }
+
+        // 2초 기다린 후의 체크 null이 아니면 2초 안기다림
+        if (chatFriend == null)
+        {
+            //ShowMessage("[FFB6C1]상대방이 게임에 접속 중이지 않습니다.[-]");
+            ShowMessage(LocalizationManager.GetText("UI_PopUp_100"));
+        }
+		else
+        {
+            if (chatFriend.status.Equals((int)OnlineState.Offline))
+            {
+                //ShowMessage("[FFB6C1]상대방이 게임에 접속 중이지 않습니다.[-]");
+                ShowMessage(LocalizationManager.GetText("UI_PopUp_100"));
+            }
+		}
+    }
+
+    public void OnStatusUpdate(string user, int status, bool gotMessage, object message)
+    {
+#if UNITY_EDITOR
+        Debug.Log("Status update: " + user + ", " + status + ", " + message);
+#endif
+        AddChatFriendStatus(user, status, message);
+
+        chatClient.SendAcksOnly();
+    }
+#endregion
+
+    /// <summary> chatClient 의 채팅 친구 목록에 추가 </summary>
+    public void AddChatFriend(InfoFriend friend)
+    {
+        chatClient.AddFriends(new string[] { friend.nick });
+    }
+
+    /// <summary> chatClient 의 채팅 친구 목록에 추가 </summary>
+    public void AddChatFriend(List<InfoFriend> friends)
+    {
+        List<string> friendsNick = new List<string>();
+        for(int i = 0; i < friends.Count; i++)
+        {
+            //AddChatFriend(friends[i]);
+            friendsNick.Add(friends[i].nick);
+        }
+        //return;
+        chatClient.AddFriends(friendsNick.ToArray());
+    }
+
+    /// <summary> chatFriendStatus에 추가될 때 발생. delegate </summary>
+    void OnAddChatFriendStatus(object sender, object value)
+    {
+        ChatFriendStatus c = (ChatFriendStatus)value;
+#if UNITY_EDITOR
+        //Debug.Log("Add chatFriends: " + c.nickName + ", " + (OnlineState)c.status + ", " + c.message + ", total: " + chatFriendStatus.Count);
+#endif
+        
+        //유저 상태 갱신
+        FriendDataManager friendDataManager = DataManager.Instance.friend;
+        if (friendDataManager != null)
+        {
+            if (friendDataManager.onChangeFriendStatus != null)
+                friendDataManager.onChangeFriendStatus(c.nickName, (OnlineState)c.status, c.message);
+        }            
+    }
+
+    //채팅 친구에 등록된 애들의 상태로 업데이트
+    public void UpdateFriendStatus(InfoFriend friend)
+    {
+        StartCoroutine(UpdateFriendStatusA(friend));
+    }
+    IEnumerator UpdateFriendStatusA(InfoFriend friend)
+    {
+        float startTime = Time.time;
+        ChatFriendStatus chatFriend = chatFriendStatus.Find(x => x.nickName == friend.nick);
+        while (chatFriend == null && Time.time < startTime + 15f)
+        {
+            chatFriend = chatFriendStatus.Find(x => x.nickName == friend.nick);
+
+            yield return new WaitForSeconds(1f);
+        }
+
+        if(chatFriend == null)
+        {
+            Debug.Log(friend.nick + " 채팅 친구로 등록 안 되어 있음");
+            yield break;
+        }
+
+        friend.state = (OnlineState)chatFriend.status;
+        Dictionary<string, string> message = (Dictionary<string, string>)chatFriend.message;
+        //용도에 따라 양식이 다름
+        if (message != null)
+        {
+            if (message.ContainsKey("tier"))
+            {
+                int.TryParse(message["tier"], out friend.tier);
+            }
+            //if (message.ContainsKey("rp"))
+            //{
+            //    int.TryParse(message["rp"], out friend.rp);
+            //}
+            if (message.ContainsKey("rpDeathmatch"))
+            {
+                int.TryParse(message["rpDeathmatch"], out friend.rpDeathmatch);
+            }
+            if (message.ContainsKey("rpTeammatch"))
+            {
+                int.TryParse(message["rpTeammatch"], out friend.rpTeammatch);
+            }
+            if (message.ContainsKey("party"))
+            {
+                friend.curPartyName = message["party"];
+            }
+            if (message.ContainsKey("isJoinedGame"))
+            {
+                bool.TryParse(message["isJoinedGame"], out friend.isJoinedGame);
+            }
+            if (message.ContainsKey("roomName"))
+            {
+                friend.curRoomName = message["roomName"];
+            }
+            if (message.ContainsKey("playerCount"))
+            {
+                int.TryParse(message["playerCount"], out friend.curRoomPlayerCount);
+            }
+            if (message.ContainsKey("mapType"))
+            {
+                friend.curRoomMapType = message["mapType"];
+            }
+            if (message.ContainsKey("mapID"))
+            {
+                friend.curRoomMapID = message["mapID"];
+            }
+        }
+    }
+
+    void AddChatFriendStatus(string user, int status, object message)
+    {
+        ChatFriendStatus chatFriend = chatFriendStatus.Find(x => x.nickName == user);
+        //Debug.LogWarning(chatFriend);
+        if (chatFriend == null)
+        {
+            chatFriend = new ChatFriendStatus();
+
+            chatFriend.nickName = user;
+            chatFriend.status = status;
+            chatFriend.message = message;
+            chatFriendStatus.Add(chatFriend);
+
+            if (ClanManager.Instance && ClanManager.Instance.clan != null && !string.IsNullOrEmpty(ClanManager.Instance.clan.name))
+                ClanManager.Instance.UpdateClanMemberOnlineState(chatFriend.nickName, (OnlineState)chatFriend.status, chatFriend.message);
+        }
+        else
+        {
+            //업데이트
+            chatFriend.status = status;
+            chatFriend.message = message;
+
+            //DataManager.Instance.friend.UpdateState(chatFriend.nickName, (OnlineState)chatFriend.status, chatFriend.message);
+            
+            FriendDataManager friendDataManager = DataManager.Instance.friend;
+            if (friendDataManager != null)
+            {
+                if (friendDataManager.onChangeFriendStatus != null)
+                    friendDataManager.onChangeFriendStatus(chatFriend.nickName, (OnlineState)chatFriend.status, chatFriend.message);
+            }            
+
+            if(ClanManager.Instance && ClanManager.Instance.clan != null && !string.IsNullOrEmpty(ClanManager.Instance.clan.name))
+                ClanManager.Instance.UpdateClanMemberOnlineState(chatFriend.nickName, (OnlineState)chatFriend.status, chatFriend.message);
+        }
+        
+    }
+    void UpdateChatFriendStatus(string user, int status, object message)
+    {
+    }
+    
+    public void DebugReturn(DebugLevel level, string message)
+    {
+        Debug.Log(message);
+        //throw new NotImplementedException();
+    }
+
+    IEnumerator UserKickTimer()
+    {
+        yield return new WaitForSeconds(3);
+        UserKick();
+    }
+    public void UserKick()
+    {
+        Debug.Log("Kick");
+        Application.Quit();
+    }
+
+    /// <summary> 로비에 있는 유저들 전부 강퇴 </summary>
+    public void OnAllKick()
+    {
+        Debug.LogWarning("AllKick");
+        string[] msg = { "All", AllMessageType.Exit.ToString() };
+        chatClient.PublishMessage("lobby", msg);
+    }
+}
