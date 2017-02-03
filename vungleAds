@@ -1,0 +1,49 @@
+using UnityEngine;
+using System.Collections;
+
+public class AdsManager : MonoBehaviour
+{
+    static AdsManager instance = null;
+    public static AdsManager GetInstance
+    {
+        get
+        {
+            if (instance == null)
+            {
+                instance = FindObjectOfType(typeof(AdsManager)) as AdsManager;
+
+                if (instance == null)
+                {
+                    Debug.Log("Nothing" + instance.ToString());
+                    return null;
+                }
+            }
+            return instance;
+        }
+    }
+
+    public string Android_String = "com.TestLevel.UnityAdsTestApp";
+    public string IOS_String = string.Empty;
+
+    void Start()
+    {
+        Vungle.init(Android_String, IOS_String);
+        VungleManager.OnAdStartEvent += onAdStartEvent;
+        VungleManager.OnAdEndEvent += onAdEndEvent;
+    }
+
+    void onAdStartEvent()
+    {
+        Debug.Log("Vungle Start");
+    }
+
+    void onAdEndEvent()
+    {
+        Debug.Log("Vungle End");
+    }
+
+    public void ShowVideoVangle()
+    {
+        Vungle.playAd();
+    }
+}
