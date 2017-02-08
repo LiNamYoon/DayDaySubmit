@@ -1,0 +1,14 @@
+[Header("Hi there!")]
+ public string TheHeader = "Header!"; 
+ 
+ [Tooltip("This is THE VALUE!")]
+ [ContextMenuItem("Reset", "resetTheValue")]
+ public float TheValue = 42.0f;
+  
+ [Space(50)]
+ public string TheString = "THE STRING";
+ [ContextMenu("Reset The Value")]
+ private void resetTheValue()  
+ {
+     TheValue = 42;
+ }
