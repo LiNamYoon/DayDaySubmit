@@ -1,0 +1,328 @@
+<?php
+// 유면 유저를 분류하고 검색하는 php
+
+	
+	include("Config.php");
+	
+	$id = $_POST['id'];
+	$type = $_POST['type'];
+	
+	// 정리할 테이블의 배열
+	$dormantTables = array("user_Dormant","mail_Dormant","Attendance_Dormant","Property_Dormant","userDetail_Dormant","RankTeammatchAll_Dormant",
+			"RankDeathmatchAll_Dormant","PremiumPackage_Dormant","PossessCharacter_Dormant","Inventory_Dormant","Achieve_Dormant");
+	$enableTables =  array("user","mail","Attendance","Property","userDetail","RankTeammatchAll",
+			"RankDeathmatchAll","PremiumPackage","PossessCharacter","Inventory","Achieve");
+	$deleteTables = array("user_D","mail_D","Attendance_D","Property_D","userDetail_D","RankTeammatchAll_D",
+			"RankDeathmatchAll_D","PremiumPackage_D","PossessCharacter_D","Inventory_D","Achieve_D");
+
+	$idColumn = array("id","reciever","cId","cId","userID","userID","userID","userID","userID");
+	
+	$k = 0;
+	$i = 0;
+	$j = 0;
+	
+
+	if($type == "" || $type == NULL)
+	{
+		$result_text = "Type is Null";
+		echo $result_text;
+		return ;		
+	}	
+	else if($type == "RetrunToUser")
+	{
+		// 복귀 유저
+		$getTable = $dormantTables; 
+		$setTable = $enableTables;	
+		$result_text = "RetrunToEnableUser";
+		
+		Swap($conn, $id, $getTable, $setTable,$idColumn);
+		echo $result_text;
+		return ;
+	}
+	else if($type == "DeleteUser")
+	{
+		// 삭제 백업 유저
+		$sql = "SELECT id FROM user WHERE id = '$id'";
+		$result = mysqli_query($conn, $sql);
+		$row = mysqli_num_rows($result);
+		if($row > 0)
+		{
+			$getTable = $enableTables;
+			$setTable = $deleteTables;
+			$result_text = "DeleteUser";
+			
+			Swap($conn, $id, $getTable, $setTable,$idColumn);
+			echo $result_text;
+			return ;
+		}
+		else 
+		{
+			$getTable = $dormantTables;
+			$setTable = $deleteTables;
+			$result_text = "DeleteUser";
+			
+			Swap($conn, $id, $getTable, $setTable,$idColumn);
+			echo $result_text;
+			return ;
+		}		
+	}
+	else if($type == "DormantUser")
+	{
+		// 유저 테이블 정리
+		$getTable = $enableTables;
+		$setTable = $deleteTables;
+		
+		DeleteSwap($conn, $getTable, $setTable,$idColumn);
+
+
+		$getTable = $enableTables;
+		$setTable = $dormantTables;
+		
+		DormantSwap($conn, $getTable, $setTable,$idColumn);
+		$result_text = "ChangeSuccess";
+		echo $result_text;
+		return ;		
+	}
+	else 
+	{
+		$result_text = "Type not found";
+		echo $result_text;
+		return ;
+	}
+
+
+	
+	function Swap($conn, $id, $getTable = array(), $setTable =array(),$idColumn)
+	{
+		$i = 0;
+		foreach ($setTable as $value)
+		{	
+			$sql ="INSERT INTO $setTable[$i] SELECT * FROM $getTable[$i] WHERE $idColumn[$i] = '$id'";
+			mysqli_query($conn, $sql);
+			$sql = "DELETE FROM $getTable[$i] WHERE $idColumn[$i] = '$id'";
+			mysqli_query($conn, $sql);
+// 			if($i ==0)
+// 			{
+// 				$sql ="INSERT INTO $setTable[$i] SELECT * FROM $getTable[$i] WHERE $idColumn[$i] = '$id'";
+// 				mysqli_query($conn, $sql);
+// 				$sql = "DELETE FROM $getTable[$i] WHERE $idColumn[$i] = '$id'";
+// 				mysqli_query($conn, $sql);
+// 			}
+// 			else if($i ==1)
+// 			{
+// 				$sql ="INSERT INTO $setTable[$i] SELECT * FROM $getTable[$i] WHERE reciever = '$id'";
+// 				mysqli_query($conn, $sql);
+// 				$sql = "DELETE FROM $getTable[$i] WHERE reciever = '$id'";
+// 				mysqli_query($conn, $sql);
+// 			}
+// 			else if($i ==2)
+// 			{
+// 				$sql ="INSERT INTO $setTable[$i] SELECT * FROM $getTable[$i] WHERE cId = '$id'";
+// 				mysqli_query($conn, $sql);
+// 				$sql = "DELETE FROM $getTable[$i] WHERE cId = '$id'";
+// 				mysqli_query($conn, $sql);
+// 			}
+// 			else if($i ==3)
+// 			{
+// 				$sql ="INSERT INTO $setTable[$i] SELECT * FROM $getTable[$i] WHERE cId = '$id'";
+// 				mysqli_query($conn, $sql);
+// 				$sql = "DELETE FROM $getTable[$i] WHERE cId = '$id'";
+// 				mysqli_query($conn, $sql);
+// 			}
+// 			else
+// 			{
+// 				$sql ="INSERT INTO $setTable[$i] SELECT * FROM $getTable[$i] WHERE userID = '$id'";
+// 				mysqli_query($conn, $sql);
+// 				$sql = "DELETE FROM $getTable[$i] WHERE userID = '$id'";
+// 				mysqli_query($conn, $sql);
+// 			}
+			$i++;
+		}
+	
+	}
+	
+	
+	function DeleteSwap($conn, $getTable = array(),$setTable =array(),$idColumn)
+	{
+		$i = 0;
+		foreach ($setTable as $value)
+		{				
+			if($i ==0)
+			{
+				$sql = "INSERT INTO $setTable[$i]
+				SELECT * FROM $getTable[$i] WHERE
+				level < 3 AND now() > DATE_ADD( user.lastLoginTime , INTERVAL 14 DAY)";
+				mysqli_query($conn, $sql);
+				
+				
+				
+			}
+			else 
+			{
+				$sql = "INSERT INTO $setTable[$i]
+				SELECT $getTable[$i].* from $getTable[$i]
+				inner join user
+				on user.`id` = $getTable[$i].$idColumn[$i] where
+				level < 3 AND now() > DATE_ADD( user.lastLoginTime , INTERVAL 14 DAY)";
+				mysqli_query($conn, $sql);
+				
+				
+				$sql ="DELETE $getTable[$i].* FROM $getTable[$i]
+				inner join user
+				on user.`id` = $getTable[$i].$idColumn[$i] where
+				level < 3 AND now() > DATE_ADD( user.lastLoginTime , INTERVAL 14 DAY)";
+				mysqli_query($conn, $sql);
+			}
+
+// 			else if($i ==2)
+// 			{
+// 				$sql = "INSERT INTO $setTable[$i]
+// 				SELECT $getTable[$i].* from $getTable[$i]
+// 				inner join user
+// 				on user.`id` = $getTable[$i].`cId`	where
+// 				level < 3 AND now() > DATE_ADD( user.lastLoginTime , INTERVAL 14 DAY)";
+// 				mysqli_query($conn, $sql);
+				
+				
+// 				$sql ="DELETE $getTable[$i].* FROM $getTable[$i]
+// 				inner join user
+// 				on user.`id` = $getTable[$i].`cId`	where
+// 				level < 3 AND now() > DATE_ADD( user.lastLoginTime , INTERVAL 14 DAY)";
+// 				mysqli_query($conn, $sql);
+// 			}
+// 			else if($i ==3)
+// 			{
+// 				$sql = "INSERT INTO $setTable[$i]
+// 				SELECT $getTable[$i].* from $getTable[$i]
+// 				inner join user
+// 				on user.`id` = $getTable[$i].`cId`	where
+// 				level < 3 AND now() > DATE_ADD( user.lastLoginTime , INTERVAL 14 DAY)";
+// 				mysqli_query($conn, $sql);
+				
+				
+// 				$sql ="DELETE $getTable[$i].* FROM $getTable[$i]
+// 				inner join user
+// 				on user.`id` = $getTable[$i].`cId`	where
+// 				level < 3 AND now() > DATE_ADD( user.lastLoginTime , INTERVAL 14 DAY)";
+// 				mysqli_query($conn, $sql);
+// 			}
+// 			else
+// 			{
+// 				$sql = "INSERT INTO $setTable[$i]
+// 				SELECT $getTable[$i].* from $getTable[$i]
+// 				inner join user
+// 				on user.`id` = $getTable[$i].`userID`	where
+// 				level < 3 AND now() > DATE_ADD( user.lastLoginTime , INTERVAL 14 DAY)";
+// 				mysqli_query($conn, $sql);
+				
+
+// 				$sql ="DELETE $getTable[$i].* FROM $getTable[$i]
+// 				inner join user
+// 				on user.`id` = $getTable[$i].`userID`	where
+// 				level < 3 AND now() > DATE_ADD( user.lastLoginTime , INTERVAL 14 DAY)";
+// 				mysqli_query($conn, $sql);
+// 			}
+			$i++;
+		}
+		$sql ="DELETE FROM $getTable[0] WHERE
+		level < 3 AND now() > DATE_ADD( user.lastLoginTime , INTERVAL 14 DAY)";
+		mysqli_query($conn, $sql);
+		
+	}
+	
+	
+	function DormantSwap($conn, $getTable = array(),$setTable =array(),$idColumn)
+	{
+		$i = 0;
+		foreach ($setTable as $value)
+		{
+			if($i ==0)
+			{
+				$sql = "INSERT INTO $setTable[$i]
+				SELECT * FROM $getTable[$i] WHERE
+				now() > DATE_ADD( user.lastLoginTime , INTERVAL 14 DAY)";
+				mysqli_query($conn, $sql);
+				
+				
+				
+			}
+			else
+			{
+				$sql = "INSERT INTO $setTable[$i]
+				SELECT $getTable[$i].* from $getTable[$i]
+				inner join user
+				on user.`id` = $getTable[$i].`$idColumn[$i]` where
+				now() > DATE_ADD( user.lastLoginTime , INTERVAL 14 DAY)";
+				mysqli_query($conn, $sql);
+			
+			
+				$sql ="DELETE $getTable[$i].* FROM $getTable[$i]
+				inner join user
+				on user.`id` = $getTable[$i].`$idColumn[$i]`	where
+				now() > DATE_ADD( user.lastLoginTime , INTERVAL 14 DAY)";
+				mysqli_query($conn, $sql);
+			}
+			
+// 			else if($i ==2)
+// 			{
+// 				$sql = "INSERT INTO $setTable[$i]
+// 				SELECT $getTable[$i].* from $getTable[$i]
+// 				inner join user
+// 				on user.`id` = $getTable[$i].`cId`	where
+// 				now() > DATE_ADD( user.lastLoginTime , INTERVAL 14 DAY)";
+// 				mysqli_query($conn, $sql);
+	
+	
+// 				$sql ="DELETE $getTable[$i].* FROM $getTable[$i]
+// 				inner join user
+// 				on user.`id` = $getTable[$i].`cId`	where
+// 				now() > DATE_ADD( user.lastLoginTime , INTERVAL 14 DAY)";
+// 				mysqli_query($conn, $sql);
+// 			}
+// 			else if($i ==3)
+// 			{
+// 				$sql = "INSERT INTO $setTable[$i]
+// 				SELECT $getTable[$i].* from $getTable[$i]
+// 				inner join user
+// 				on user.`id` = $getTable[$i].`cId`	where
+// 				now() > DATE_ADD( user.lastLoginTime , INTERVAL 14 DAY)";
+// 				mysqli_query($conn, $sql);
+	
+	
+// 				$sql ="DELETE $getTable[$i].* FROM $getTable[$i]
+// 				inner join user
+// 				on user.`id` = $getTable[$i].`cId`	where
+// 				now() > DATE_ADD( user.lastLoginTime , INTERVAL 14 DAY)";
+// 				mysqli_query($conn, $sql);
+// 			}
+// 			else
+// 			{
+// 				$sql = "INSERT INTO $setTable[$i]
+// 				SELECT $getTable[$i].* from $getTable[$i]
+// 				inner join user
+// 				on user.`id` = $getTable[$i].`userID`	where
+// 				now() > DATE_ADD( user.lastLoginTime , INTERVAL 14 DAY)";
+// 				mysqli_query($conn, $sql);
+	
+	
+// 				$sql ="DELETE $getTable[$i].* FROM $getTable[$i]
+// 				inner join user
+// 				on user.`id` = $getTable[$i].`userID`	where
+// 				now() > DATE_ADD( user.lastLoginTime , INTERVAL 14 DAY)";
+// 				mysqli_query($conn, $sql);
+// 			}
+			$i++;
+		}
+		$sql ="DELETE FROM $getTable[0] WHERE
+		now() > DATE_ADD( user.lastLoginTime , INTERVAL 14 DAY)";
+		mysqli_query($conn, $sql);
+	
+	}
+	
+	// 결과 출력
+	echo $result_text;
+	
+	
+
+
+?>
