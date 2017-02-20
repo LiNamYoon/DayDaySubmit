@@ -1,0 +1,25 @@
+IEnumerator BlackListCheckCoroutine(string deviceID, string userID)
+    {
+        string wwwString = "GetBlackList.php";
+        WWWForm form = new WWWForm();
+        form.AddField("id", userID);
+        form.AddField("deviceID", deviceID);
+
+        Debug.Log("블랙리스트 체크 시작");
+
+        string wwwResult = "";
+        yield return StartCoroutine(WWWManager.Instance.WWW(wwwString, form, x => wwwResult = x));
+
+        Debug.Log(wwwResult);
+
+        
+        if (wwwResult == "BLACK_LIST_DELETE")
+        {
+            yield break;
+        }
+        else
+        {
+            Debug.Log("남은시간 : " + wwwResult);
+            yield break;
+        }
+    }
