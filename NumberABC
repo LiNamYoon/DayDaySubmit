@@ -1,0 +1,93 @@
+using UnityEngine;
+using System.Collections;
+using UnityEngine.UI;
+using System.Collections.Generic;
+using System;
+
+/// <summary>
+/// 수치 1000단위로 A,B,C... 붙여서 표현하는 클래스 (테스트용) 아직 적용되지 않음
+/// </summary>
+public class test : MonoBehaviour
+{
+
+    public Text text;
+    
+    public string money = "10000000000000000000000";
+
+    long _longMax = 999999999999999999;
+    List<long> _listLong;
+
+    void Start()
+    {
+
+    }
+
+    void Update()
+    {
+        //text.text = GetCurrencyIntoString(money.ToString());
+        text.text = GetCurrencyIntoString((_longMax + _longMax + _longMax + _longMax + _longMax + _longMax + _longMax).ToString());
+
+
+
+
+    }
+
+    public string GetCurrencyIntoString(string haveGold)
+    {
+        
+        string[] unit = new string[]{ "", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z",
+        "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z"
+        };
+
+        int[] cVal = new int[unit.Length];
+        
+        int index = 0;
+
+        while (true)
+        {
+            string last4 = "";
+            
+            if (haveGold.Length >= 160)
+            {
+
+                index = unit.Length;
+                break;
+            }
+            if (haveGold.Length >= 4)
+            {
+                last4 = haveGold.Substring(haveGold.Length - 4);
+                int intLast4 = int.Parse(last4);
+
+                cVal[index] = intLast4 % 1000;
+
+                haveGold = haveGold.Remove(haveGold.Length - 3);
+
+            }
+
+            else
+            {
+                cVal[index] = int.Parse(haveGold);
+
+                break;
+            }
+
+            index++;
+        }
+
+        if (index > (unit.Length - 1))
+        {
+            haveGold = "MAX";
+        }
+        else if (index > 0)
+        {
+            int r = cVal[index] * 1000 + cVal[index - 1];
+            float rValue = (float)r * 0.001f;
+
+            haveGold = string.Format("{0:F2}" + unit[index], rValue - 0.005);
+        }
+
+        return haveGold;
+
+    }
+
+}
